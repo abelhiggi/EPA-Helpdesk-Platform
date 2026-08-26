@@ -1,0 +1,84 @@
+framework:
+  - cloudformation
+
+# Every entry below is a deliberate architectural decision, not an oversight.
+# checkov was run cold against both synthesised stacks first, and only checks
+# that actually failed are listed here — nothing is skipped speculatively.
+# The full reasoning for each, including the ones that need more than one
+# line to justify, is also in docs/threat-model.md under "Suppressed scanner
+# checks" so it's auditable without opening this file.
+skip-check:
+  # Lambda in a VPC. No dependency this platform calls is inside a VPC —
+  # DynamoDB, SQS, Bedrock, SES and CloudWatch are all reached over the AWS
+  # network via their public service endpoints. Putting the functions in a
+  # VPC would add a NAT gateway (cost, and a second network path to secure)
+  # and cold-start ENI attachment latency, for no dependency that needs it.
+  - CKV_AWS_117
+
+  # Lambda-level Dead Letter Queue (DeadLetterConfig). That mechanism is for
+  # asynchronous Lambda invokes and does not apply to an SQS event source at
+  # all. This platform's DLQ is implemented at the SQS layer instead —
+  # maxReceiveCount 3 on TicketQueue plus ReportBatchItemFailures on the event
+  # source mapping — which is the correct layer for an SQS-triggered function.
+  - CKV_AWS_116
+
+  # GET /health has no Cognito authorizer. Deliberate: it is an
+  # unauthenticated availability probe, not a data endpoint. It short-circuits
+  # before the Cognito claims check, makes no downstream calls (no DynamoDB,
+  # no SQS, no Bedrock), and returns a fixed {"status": "ok"} with no ticket
+  # or account data. Bounded by the same 25 req/s stage throttle as every
+  # other route. See docs/threat-model.md row 13.
+  - CKV_AWS_59
+
+  # API Gateway response caching. Every response is per-user authenticated
+  # ticket data (GET /tickets/{id}). A cache keyed wrong, or shared across
+  # users by a misconfigured cache key, risks serving one officer's ticket
+  # status to another. Not worth the latency win at this request volume.
+  - CKV_AWS_120
+
+  # Lambda environment variable encryption (a second, function-specific KMS
+  # layer on top of the default AWS-managed one Lambda already applies).
+  # The environment variables here are a DynamoDB table name, a queue URL, a
+  # Bedrock model ID and a boolean feature toggle — no secrets, no
+  # credentials, nothing that needs a customer-managed key on top.
+  - CKV_AWS_173
+
+  # S3 access logging, on both the site bucket and the canary artifacts
+  # bucket. Both would need a second bucket purely to receive access logs
+  # nobody has a use case for yet — disproportionate for three public static
+  # files and canary run artifacts. CloudTrail data events are the
+  # appropriate control to add if a real need for object-level audit ever
+  # shows up; a logging bucket for its own sake is not.
+  - CKV_AWS_18
+
+  # Lambda reserved concurrency, on Ingest and Process (the same check is
+  # fixed properly on Redrive — see reserved_concurrent_executions=1 there,
+  # which is a correctness bound against racing DLQ redrives, not a scanner
+  # fix). Ingest is the customer-facing submission path: a reserved
+  # concurrency cap there is an arbitrary throughput ceiling, not a
+  # correctness requirement, and would mean real 429s under real load for no
+  # benefit. Same reasoning for Process. This also fires on
+  # CustomS3AutoDeleteObjectsCustomResourceProvider, a CDK framework-owned
+  # Lambda this stack does not control the definition of.
+  - CKV_AWS_115
+
+  # CloudFront viewer certificate minimum TLS version. This distribution uses
+  # the default *.cloudfront.net certificate (no custom domain is configured)
+  # — AWS does not allow a minimum TLS protocol version to be set on that
+  # default certificate at all; it is only configurable once a custom ACM
+  # certificate is attached. Fixing this properly means adding a custom
+  # domain, which is a real architecture addition outside this change.
+  - CKV_AWS_174
+
+  # CloudFront WAF. The distribution has exactly two write-capable origins
+  # behind it — POST /tickets and the unauthenticated GET /health — both
+  # already bounded by the API's 25 req/s stage throttle, and PRICE_CLASS_100
+  # plus Cognito-required auth on every route except /health are the actual
+  # controls in front of this traffic. A WAF WebACL is a real ongoing cost
+  # for a threat this architecture does not have an unmitigated case of yet.
+  - CKV_AWS_68
+
+  # CloudFront access logging. Same disproportionate-cost reasoning as
+  # CKV_AWS_18 above — a logging destination bucket purely to receive access
+  # logs, with no current use case for them.
+  - CKV_AWS_86

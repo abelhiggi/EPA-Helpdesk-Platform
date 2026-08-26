@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,17 +40,43 @@ jobs:
         env:
           DEV_ACCOUNT_ID: "000000000000"
           PROD_ACCOUNT_ID: "000000000000"
+          # Without these, notification_from is empty, CDK's minimizePolicies
+          # merges the (correctly ses:FromAddress-scoped) SES statement into
+          # the unconstrained X-Ray one, and checkov's CKV_AWS_111 fails on a
+          # policy shape that never reaches a real deploy. Dummy but
+          # realistic values keep the synthesised template honest.
+          NOTIFICATION_FROM: "ci-test@example.gov.uk"
+          NOTIFICATION_TO: "ci-test@example.gov.uk"
 
       # Scans the synthesised CloudFormation, which is what actually gets
-      # deployed — scanning the CDK source would miss anything the framework
+      # deployed, scanning the CDK source would miss anything the framework
       # adds on your behalf.
       - name: Infrastructure security scan
-        run: checkov -d cdk.out --quiet --compact --framework cloudformation
+        run: checkov -d cdk.out --quiet --compact --framework cloudformation --config-file .checkov.yaml
 
+      # Three findings ignored below, all dev-tooling only (transitive
+      # dependencies of checkov; the Lambda functions bundle no third-party
+      # packages, so none of this is reachable from deployed code — see
+      # docs/threat-model.md's "Suppressed scanner checks" section):
+      #   - asteval GHSA-9w56-46f6-3qhx / CVE-2026-55244 (same vulnerability,
+      #     two IDs): fixed at 1.0.9, but checkov hard-pins asteval to an
+      #     exact version and even its latest release (3.3.15) pins ==1.0.6.
+      #     Pending checkov relaxing that pin upstream; the floor in
+      #     requirements-dev.txt is raised to 1.0.6 to get everything checkov
+      #     itself already fixed.
+      #   - ecdsa PYSEC-2026-1325 (the Minerva timing attack, aka
+      #     CVE-2024-23342 / GHSA-wj6h-64fc-37mp): a direct dependency of
+      #     checkov 3.3.15. Not pending anything — the ecdsa project has
+      #     stated side-channel attacks are out of scope and there is no
+      #     planned fix, so this is a permanent accepted risk, not a version
+      #     to wait for.
       - name: Dependency vulnerabilities
         run: |
           pip install pip-audit==2.7.3
-          pip-audit -r requirements.txt -r requirements-dev.txt
+          pip-audit -r requirements.txt -r requirements-dev.txt \
+            --ignore-vuln GHSA-9w56-46f6-3qhx \
+            --ignore-vuln CVE-2026-55244 \
+            --ignore-vuln PYSEC-2026-1325
 
   codeql:
     runs-on: ubuntu-latest
