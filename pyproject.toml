@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests", "src"]
+
+[tool.ruff.lint.isort]
+# `common` lives beside the handlers in the Lambda asset, so it is ours, not a
+# third-party package.
+known-first-party = ["common", "infra"]
