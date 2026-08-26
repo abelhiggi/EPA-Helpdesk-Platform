@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IT Helpdesk — Salford City Council</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+
+<header>
+  <p class="org">Salford City Council</p>
+  <h1>IT Helpdesk</h1>
+  <div id="account" hidden>
+    <span id="who"></span>
+    <button type="button" id="signout" class="link">Sign out</button>
+  </div>
+</header>
+
+<main id="main">
+  <div id="signin-panel">
+    <p>Sign in with your council account to raise a support request.</p>
+    <button type="button" id="signin" class="primary">Sign in</button>
+  </div>
+
+  <section id="app" hidden>
+    <h2>Raise a request</h2>
+    <label for="description">What has gone wrong?</label>
+    <p class="hint" id="description-hint">
+      Include what you were doing, what happened, and which building you are in.
+    </p>
+    <textarea id="description" rows="6" maxlength="4000"
+              aria-describedby="description-hint"></textarea>
+    <button type="button" id="submit" class="primary">Send request</button>
+
+    <div id="result" role="status" aria-live="polite"></div>
+
+    <h2>Check a request</h2>
+    <label for="lookup">Reference</label>
+    <input id="lookup" type="text" autocomplete="off" spellcheck="false">
+    <button type="button" id="check">Check status</button>
+    <div id="status-result" role="status" aria-live="polite"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
