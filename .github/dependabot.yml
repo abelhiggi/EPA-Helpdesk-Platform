@@ -1,0 +1,22 @@
+# Automated patching. Dependabot raises the PR, CI gates it, auto-merge lands
+# it, and the deploy workflow ships a new immutable Lambda version. No console,
+# no human, no in-place patching.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cdk:
+        patterns: ["aws-cdk-lib", "constructs"]
+      dev-tooling:
+        patterns: ["pytest*", "ruff", "checkov", "boto3", "botocore"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday

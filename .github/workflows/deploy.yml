@@ -1,0 +1,97 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Weekly rebuild with no code change, so a patched Lambda base image and
+  # refreshed dependencies reach production even in a quiet week.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Continuous Deployment: every green commit reaches dev with no human step.
+  dev:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      site: ${{ steps.outputs.outputs.site }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.DEV_DEPLOY_ROLE_ARN }}
+          aws-region: eu-west-2
+      - name: Install
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          npm install -g aws-cdk
+      - name: Deploy
+        env:
+          DEV_ACCOUNT_ID: ${{ secrets.DEV_ACCOUNT_ID }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+          NOTIFICATION_FROM: ${{ vars.NOTIFICATION_FROM }}
+          NOTIFICATION_TO: ${{ vars.NOTIFICATION_TO }}
+        run: make deploy-dev
+      - id: outputs
+        run: ./scripts/publish-frontend.sh Helpdesk-dev
+
+      - name: Smoke test
+        run: ./scripts/smoke-test.sh Helpdesk-dev
+
+  # Continuous Delivery: prod is always deployable from this artefact, but a
+  # named reviewer on the `production` environment decides when it ships. This
+  # is the difference between Continuous Delivery and Continuous Deployment,
+  # demonstrated rather than described.
+  prod:
+    needs: dev
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_DEPLOY_ROLE_ARN }}
+          aws-region: eu-west-2
+      - name: Install
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          npm install -g aws-cdk
+      - name: Deploy
+        env:
+          PROD_ACCOUNT_ID: ${{ secrets.PROD_ACCOUNT_ID }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+          NOTIFICATION_FROM: ${{ vars.NOTIFICATION_FROM }}
+          NOTIFICATION_TO: ${{ vars.NOTIFICATION_TO }}
+        run: make deploy-prod
+      - run: ./scripts/publish-frontend.sh Helpdesk-prod
+      - run: ./scripts/smoke-test.sh Helpdesk-prod
+
+      # Rollback is redeploying the previous commit. No bespoke release
+      # manifests, no restore script — CloudFormation already does this, and a
+      # rollback path you never exercise is not a rollback path.
+      - name: Roll back on smoke failure
+        if: failure()
+        run: |
+          git checkout HEAD~1
+          make deploy-prod
+        env:
+          PROD_ACCOUNT_ID: ${{ secrets.PROD_ACCOUNT_ID }}

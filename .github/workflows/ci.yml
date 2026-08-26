@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          npm install -g aws-cdk
+
+      - name: Lint and format
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Unit and infrastructure tests
+        run: make test
+
+      - name: Synthesise both environments
+        run: |
+          make synth ENV=dev
+          make synth ENV=prod
+        env:
+          DEV_ACCOUNT_ID: "000000000000"
+          PROD_ACCOUNT_ID: "000000000000"
+
+      # Scans the synthesised CloudFormation, which is what actually gets
+      # deployed — scanning the CDK source would miss anything the framework
+      # adds on your behalf.
+      - name: Infrastructure security scan
+        run: checkov -d cdk.out --quiet --compact --framework cloudformation
+
+      - name: Dependency vulnerabilities
+        run: |
+          pip install pip-audit==2.7.3
+          pip-audit -r requirements.txt -r requirements-dev.txt
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+
+  # Patching only counts as automated if nothing waits for a human. A green CI
+  # run on a Dependabot PR merges itself.
+  auto-merge:
+    needs: [verify, codeql]
+    if: github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
