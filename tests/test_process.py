@@ -101,10 +101,85 @@ class TestCategorisation:
         process.handler(sqs_event(), None)
         assert float(written(process)[":conf"]) <= 1.0
 
-    def test_non_json_model_output_is_a_retryable_failure(self, process, monkeypatch):
+    def test_unparseable_model_output_falls_back_instead_of_raising(self, process, monkeypatch):
+        """Previously this asserted the message became a batchItemFailure and
+        was retried via SQS. That was wrong in production: temperature=0.0
+        makes the model deterministic, so a retry gets back the identical
+        unparseable response every time, not a transient glitch that
+        clears. That means it isn't a retryable failure at all — it's the
+        same class of problem as an out-of-taxonomy category one check
+        later in _classify, which already degrades gracefully to the
+        keyword fallback rather than raising. An unparseable response
+        belongs on that same path, so the ticket still routes rather than
+        dead-lettering and parking permanently."""
         monkeypatch.setattr(process, "_bedrock", bedrock_returning("I'd be happy to help!"))
         result = process.handler(sqs_event(), None)
-        assert result["batchItemFailures"] == [{"itemIdentifier": "m-1"}]
+        assert result["batchItemFailures"] == []
+        assert written(process)[":routed"] == "ROUTED"
+
+    def test_fenced_json_response_with_language_tag_parses_correctly(self, process, monkeypatch):
+        """Haiku 4.5 wraps its answer in a ```json fence despite the prompt
+        saying not to — this is the exact response observed in the incident
+        this test guards against (see docs/troubleshooting.md)."""
+        monkeypatch.setattr(
+            process,
+            "_bedrock",
+            bedrock_returning(
+                '```json\n{"category": "network", "priority": "high", "confidence": 0.95}\n```'
+            ),
+        )
+        process.handler(sqs_event(), None)
+        values = written(process)
+        assert values[":c"] == "network"
+        assert values[":p"] == "high"
+        assert values[":routed"] == "ROUTED"
+
+    def test_bare_fenced_json_response_parses_correctly(self, process, monkeypatch):
+        monkeypatch.setattr(
+            process,
+            "_bedrock",
+            bedrock_returning(
+                '```\n{"category": "software", "priority": "low", "confidence": 0.5}\n```'
+            ),
+        )
+        process.handler(sqs_event(), None)
+        values = written(process)
+        assert values[":c"] == "software"
+        assert values[":p"] == "low"
+        assert values[":routed"] == "ROUTED"
+
+    def test_fenced_response_with_out_of_taxonomy_category_still_falls_back(
+        self, process, monkeypatch
+    ):
+        monkeypatch.setattr(
+            process,
+            "_bedrock",
+            bedrock_returning(
+                '```json\n{"category": "hardware", "priority": "high", "confidence": 0.9}\n```'
+            ),
+        )
+        process.handler(sqs_event(), None)
+        values = written(process)
+        assert values[":c"] in process.CATEGORIES
+        assert values[":routed"] == "ROUTED"
+
+    def test_fallback_emits_a_classification_fallbacks_metric(self, process, monkeypatch):
+        metric = MagicMock()
+        monkeypatch.setattr(process, "emit_metric", metric)
+        monkeypatch.setattr(process, "_bedrock", bedrock_returning("not json at all"))
+        process.handler(sqs_event(), None)
+        metric.assert_any_call("ClassificationFallbacks", 1)
+
+    def test_successful_classification_does_not_emit_a_fallback_metric(self, process, monkeypatch):
+        metric = MagicMock()
+        monkeypatch.setattr(process, "emit_metric", metric)
+        monkeypatch.setattr(
+            process,
+            "_bedrock",
+            bedrock_returning({"category": "network", "priority": "high", "confidence": 0.9}),
+        )
+        process.handler(sqs_event(), None)
+        assert "ClassificationFallbacks" not in [call.args[0] for call in metric.call_args_list]
 
 
 class TestFeatureToggle:
