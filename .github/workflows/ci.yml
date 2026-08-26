@@ -39,12 +39,19 @@ jobs:
         env:
           DEV_ACCOUNT_ID: "000000000000"
           PROD_ACCOUNT_ID: "000000000000"
+          # Without these, notification_from is empty, CDK's minimizePolicies
+          # merges the (correctly ses:FromAddress-scoped) SES statement into
+          # the unconstrained X-Ray one, and checkov's CKV_AWS_111 fails on a
+          # policy shape that never reaches a real deploy. Dummy but
+          # realistic values keep the synthesised template honest.
+          NOTIFICATION_FROM: "ci-test@example.gov.uk"
+          NOTIFICATION_TO: "ci-test@example.gov.uk"
 
       # Scans the synthesised CloudFormation, which is what actually gets
-      # deployed — scanning the CDK source would miss anything the framework
+      # deployed, scanning the CDK source would miss anything the framework
       # adds on your behalf.
       - name: Infrastructure security scan
-        run: checkov -d cdk.out --quiet --compact --framework cloudformation
+        run: checkov -d cdk.out --quiet --compact --framework cloudformation --config-file .checkov.yaml
 
       - name: Dependency vulnerabilities
         run: |

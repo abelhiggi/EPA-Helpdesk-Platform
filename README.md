@@ -4,7 +4,7 @@ AI-triaged IT helpdesk for Salford City Council. A council officer submits a
 support request; Bedrock categorises it and assigns a team; the team is notified;
 the officer can check where it went. Serverless, on AWS, in `eu-west-2`.
 
-Built as AWS CDK (Python) — one stack definition, 65 resources in prod and 69
+Built as AWS CDK (Python) — one stack definition, 67 resources in prod and 71
 in dev (confirmed by `cdk synth`, not estimated), deployed as two stacks side
 by side in a single AWS account by GitHub Actions with OIDC. No static
 credentials, no console steps after bootstrap.
@@ -79,7 +79,7 @@ triggers the redrive function.
 
 ```
 app.py                    CDK entry point: one stack, two environments
-infra/helpdesk_stack.py   the whole platform, 65 resources in prod (69 in dev)
+infra/helpdesk_stack.py   the whole platform, 67 resources in prod (71 in dev)
 src/                      one Lambda asset — three handlers plus shared code
   common.py               logging and EMF metrics
   ingest.py               POST /tickets, GET /tickets/{id}
