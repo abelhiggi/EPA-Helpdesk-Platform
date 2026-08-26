@@ -68,6 +68,29 @@ summarised here so it's readable without opening a scanner config.
 | CKV_AWS_68 | A WAF WebACL on the CloudFront distribution | Two write-capable routes exist behind it, `POST /tickets` and `GET /health`, both already bounded by the 25 req/s stage throttle, with Cognito required on every route except the deliberately-open health check. A WAF is real ongoing cost for a threat this architecture doesn't have an unmitigated case of |
 | CKV_AWS_86 | CloudFront access logging | Same reasoning as CKV_AWS_18: a logging destination bucket with no current use case for its contents |
 
+### pip-audit (dependency vulnerabilities)
+
+**The Lambda functions have a zero-dependency runtime.** `src/` is four files
+— `common.py`, `ingest.py`, `process.py`, `redrive.py` — with no
+`requirements.txt` and nothing vendored into it. `lambda_.Code.from_asset("src")`
+zips exactly that directory with no build/bundling step, so the deployed
+asset genuinely is those four files, nothing more. Every import across all
+four is either the standard library or `boto3`, which the Lambda Python 3.12
+runtime provides — `grep -n "^import\|^from" src/*.py` shows no third-party
+import anywhere. That means a vulnerability in a *dev-tooling* dependency
+(checkov, pip-audit itself, anything only imported by them) cannot reach
+deployed code by construction, not by policy — there is no path from a
+`requirements-dev.txt` package to a running Lambda.
+
+That's the basis for the three `pip-audit` findings ignored in
+`.github/workflows/ci.yml`'s "Dependency vulnerabilities" step, all
+transitive dependencies of checkov:
+
+| Finding | Package | Why it's ignored |
+|---|---|---|
+| GHSA-9w56-46f6-3qhx / CVE-2026-55244 (one vulnerability, two IDs) | asteval 1.0.6 | Fixed at 1.0.9, but checkov hard-pins asteval to an *exact* version at every release, including latest (3.3.15: `==1.0.6`). `requirements-dev.txt` raises the floor to 1.0.6 — everything checkov itself has adopted — pending checkov relaxing its own pin upstream. Dev-tooling only; see above |
+| PYSEC-2026-1325 (aka CVE-2024-23342, GHSA-wj6h-64fc-37mp — the Minerva timing attack) | ecdsa 0.19.2 | A direct dependency of checkov 3.3.15, pulled in when raising the checkov floor to resolve the asteval/urllib3 pins above. Not pending anything: the ecdsa project has stated side-channel attacks are out of scope and there is no planned fix, so this is accepted permanently, not a version to wait for. Dev-tooling only; see above |
+
 **Fixed, not suppressed, in the same pass:** API Gateway access logging
 (CKV_AWS_76 — a dedicated, KMS-encrypted log group with a structured JSON
 format covering `requestId`, `sourceIp`, `requestTime`, `httpMethod`,

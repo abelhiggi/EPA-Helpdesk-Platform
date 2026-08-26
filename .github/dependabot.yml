@@ -4,6 +4,11 @@
 version: 2
 updates:
   - package-ecosystem: pip
+    # Covers requirements.txt AND requirements-dev.txt, not just the former:
+    # confirmed against dependabot-core's own file fetcher, which matches any
+    # *.txt/*.in file whose name contains "requirements" in this directory,
+    # not an exact "requirements.txt" filename. Dev tooling gets patched
+    # automatically same as runtime dependencies.
     directory: "/"
     schedule:
       interval: weekly
