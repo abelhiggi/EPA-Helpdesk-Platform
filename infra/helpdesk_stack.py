@@ -4,14 +4,17 @@ Six CloudFormation stacks with a bespoke ordering script was the wrong shape for
 a system this size: CDK resolves dependency order from the construct graph, so
 splitting buys nothing and costs an orchestration layer to maintain.
 
-65 resources in prod, 69 in dev (dev also deploys the auto-delete-on-destroy
+67 resources in prod, 71 in dev (dev also deploys the auto-delete-on-destroy
 custom resource for its two S3 buckets, since prod buckets are retained, not
 destroyed). Confirmed by synthesising both stacks with `cdk synth`, not
 estimated. Every one of them is here because a pass or distinction criterion
 needs it, or because the thing genuinely will not run without it.
 """
 
+import json
+
 from aws_cdk import (
+    ArnFormat,
     CfnOutput,
     Duration,
     RemovalPolicy,
@@ -321,15 +324,36 @@ class HelpdeskStack(Stack):
             "arn:aws:lambda:eu-west-2:580247275435:layer:LambdaInsightsExtension-Arm64:35",
         )
 
-        def make_fn(name: str, entrypoint: str, timeout: int, memory: int, env: dict):
+        # Plain Python strings, not the LogGroup constructs' `.log_group_name`
+        # attribute: that attribute always resolves via `Ref` to the log
+        # group resource, even when the name was given explicitly below.
+        # Putting that `Ref` in the KMS key's policy — while the log group
+        # also references the key for encryption via `encryption_key` — is a
+        # literal CloudFormation dependency cycle, undeployable, not just
+        # ugly. Building the ARNs from the same literal strings passed to
+        # `log_group_name` avoids referencing the resource at all.
+        log_group_names: list[str] = []
+
+        def make_fn(
+            name: str,
+            entrypoint: str,
+            timeout: int,
+            memory: int,
+            env: dict,
+            reserved_concurrent_executions: int | None = None,
+        ):
             # An explicit log group, rather than the retention helper, because
             # the helper deploys a custom resource Lambda purely to set a
             # retention value CloudFormation can set directly.
+            log_group_name = f"/aws/lambda/helpdesk-{env_name}-{name.lower()}"
+            log_group_names.append(log_group_name)
             log_group = logs.LogGroup(
                 self,
                 f"{name}Logs",
+                log_group_name=log_group_name,
                 retention=retention,
                 removal_policy=removal,
+                encryption_key=key,
             )
             fn = lambda_.Function(
                 self,
@@ -350,6 +374,7 @@ class HelpdeskStack(Stack):
                 log_group=log_group,
                 environment={**common_env, **env},
                 layers=[insights_layer],
+                reserved_concurrent_executions=reserved_concurrent_executions,
             )
             fn.role.add_managed_policy(
                 iam.ManagedPolicy.from_aws_managed_policy_name(
@@ -385,6 +410,11 @@ class HelpdeskStack(Stack):
             60,
             256,
             {"DLQ_URL": dlq.queue_url, "QUEUE_URL": queue.queue_url},
+            # Correctness bound, not just a scanner fix: two concurrent
+            # redrive invocations would both receive and re-send the same DLQ
+            # messages, double-queueing them. Capped at 1 so redrives happen
+            # one at a time.
+            reserved_concurrent_executions=1,
         )
 
         table.grant_read_write_data(ingest)
@@ -429,6 +459,22 @@ class HelpdeskStack(Stack):
         # API. Two routes: submit a ticket, read one back. The GET is the
         # should-have that makes status visible to the person who raised it.
         # ------------------------------------------------------------------
+        # Access logging is separate from the executionLogging above (INFO
+        # method logging): execution logs are for debugging a handler, access
+        # logs are the who/what/when/how-long record checkov's CKV_AWS_76
+        # wants. Neither the Authorization header nor any request/response
+        # body is in the format below — only routing and timing fields.
+        api_access_log_group_name = f"/aws/apigateway/helpdesk-{env_name}-access"
+        log_group_names.append(api_access_log_group_name)
+        api_access_log_group = logs.LogGroup(
+            self,
+            "ApiAccessLogs",
+            log_group_name=api_access_log_group_name,
+            retention=retention,
+            removal_policy=removal,
+            encryption_key=key,
+        )
+
         api = apigw.RestApi(
             self,
             "Api",
@@ -443,6 +489,20 @@ class HelpdeskStack(Stack):
                 throttling_rate_limit=25,
                 throttling_burst_limit=50,
                 logging_level=apigw.MethodLoggingLevel.INFO,
+                access_log_destination=apigw.LogGroupLogDestination(api_access_log_group),
+                access_log_format=apigw.AccessLogFormat.custom(
+                    json.dumps(
+                        {
+                            "requestId": "$context.requestId",
+                            "sourceIp": "$context.identity.sourceIp",
+                            "requestTime": "$context.requestTime",
+                            "httpMethod": "$context.httpMethod",
+                            "resourcePath": "$context.resourcePath",
+                            "status": "$context.status",
+                            "responseLatency": "$context.responseLatency",
+                        }
+                    )
+                ),
             ),
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=[site_origin],
@@ -474,6 +534,41 @@ class HelpdeskStack(Stack):
             "GET",
             apigw.LambdaIntegration(ingest),
             authorization_type=apigw.AuthorizationType.NONE,
+        )
+
+        # A customer-managed key does not implicitly trust CloudWatch Logs the
+        # way an AWS-managed key does — logs.<region>.amazonaws.com must be
+        # granted explicitly, or log group creation fails at deploy time with
+        # InvalidParameterException, not at synth time. Scoped to exactly the
+        # four log groups above via the encryption-context ArnLike condition,
+        # not "any log group in the account".
+        key.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudWatchLogsToUseTheKey",
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal(f"logs.{self.region}.amazonaws.com")],
+                actions=[
+                    "kms:Encrypt*",
+                    "kms:Decrypt*",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:Describe*",
+                ],
+                resources=["*"],
+                conditions={
+                    "ArnLike": {
+                        "kms:EncryptionContext:aws:logs:arn": [
+                            self.format_arn(
+                                service="logs",
+                                resource="log-group",
+                                resource_name=name,
+                                arn_format=ArnFormat.COLON_RESOURCE_NAME,
+                            )
+                            for name in log_group_names
+                        ]
+                    }
+                },
+            )
         )
 
         # ------------------------------------------------------------------
@@ -508,6 +603,7 @@ class HelpdeskStack(Stack):
             encryption=s3.BucketEncryption.KMS,
             encryption_key=key,
             enforce_ssl=True,
+            versioned=True,
             removal_policy=removal,
             auto_delete_objects=destroy_on_delete,
         )

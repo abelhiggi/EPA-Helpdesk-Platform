@@ -259,6 +259,75 @@ class TestOperability:
             assert any("LambdaInsightsExtension-Arm64" in str(layer) for layer in layers)
 
 
+class TestScannerHardening:
+    """Properties added specifically to satisfy checkov findings that were
+    real, not scanner noise — see .checkov.yaml and docs/threat-model.md's
+    "Suppressed scanner checks" section for the findings that were not."""
+
+    def test_redrive_has_reserved_concurrency_of_one(self, template):
+        """Correctness bound, not just CKV_AWS_115: two concurrent redrives
+        would both receive and re-send the same DLQ messages."""
+        functions = template.find_resources("AWS::Lambda::Function")
+        redrive = [
+            f
+            for f in functions.values()
+            if "DLQ_URL" in str(f["Properties"].get("Environment", {}))
+        ]
+        assert redrive, "expected to find the redrive function"
+        assert redrive[0]["Properties"]["ReservedConcurrentExecutions"] == 1
+
+    def test_canary_artifacts_bucket_has_versioning_enabled(self, template):
+        buckets = template.find_resources("AWS::S3::Bucket")
+        canary_bucket = [
+            b
+            for b in buckets.values()
+            if b["Properties"]
+            .get("BucketEncryption", {})
+            .get("ServerSideEncryptionConfiguration", [{}])[0]
+            .get("ServerSideEncryptionByDefault", {})
+            .get("SSEAlgorithm")
+            == "aws:kms"
+        ]
+        assert canary_bucket, "expected the KMS-encrypted canary artifacts bucket"
+        assert canary_bucket[0]["Properties"]["VersioningConfiguration"] == {"Status": "Enabled"}
+
+    def test_lambda_and_api_log_groups_are_kms_encrypted(self, template):
+        log_groups = template.find_resources("AWS::Logs::LogGroup")
+        assert len(log_groups) == 4, "Ingest, Process, Redrive and API access logs"
+        for lg in log_groups.values():
+            assert "KmsKeyId" in lg["Properties"]
+
+    def test_api_access_log_format_excludes_auth_headers_and_bodies(self, template):
+        """CKV_AWS_76 asks for access logging, not a second copy of every
+        Authorization header and request body sitting in a second log."""
+        stage = next(iter(template.find_resources("AWS::ApiGateway::Stage").values()))
+        setting = stage["Properties"]["AccessLogSetting"]
+        assert "DestinationArn" in setting
+        fmt = setting["Format"]
+        rendered = str(fmt)
+        for field in ("requestId", "sourceIp", "requestTime", "httpMethod", "status"):
+            assert field in rendered
+        assert "authorization" not in rendered.lower()
+        assert "$input.body" not in rendered
+
+    def test_kms_key_policy_grants_cloudwatch_logs_scoped_to_the_log_groups(self, template):
+        """Without this the log groups above fail to create at deploy time
+        with InvalidParameterException — a customer-managed key does not
+        implicitly trust logs.<region>.amazonaws.com the way an AWS-managed
+        key does."""
+        keys = template.find_resources("AWS::KMS::Key")
+        key = next(iter(keys.values()))
+        statements = key["Properties"]["KeyPolicy"]["Statement"]
+        logs_statements = [
+            s
+            for s in statements
+            if "logs" in str(s.get("Principal", {}).get("Service", "")).lower()
+        ]
+        assert logs_statements, "expected a key policy statement for the logs service"
+        condition = logs_statements[0]["Condition"]["ArnLike"]
+        assert "kms:EncryptionContext:aws:logs:arn" in condition
+
+
 class TestPatching:
     def test_functions_run_a_supported_python_runtime(self, template):
         for fn in template.find_resources("AWS::Lambda::Function").values():

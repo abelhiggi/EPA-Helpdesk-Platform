@@ -19,7 +19,7 @@ synth:
 	cdk synth -c env=$(ENV) >/dev/null
 
 security: synth
-	checkov -d cdk.out --quiet --compact --framework cloudformation
+	checkov -d cdk.out --quiet --compact --framework cloudformation --config-file .checkov.yaml
 
 deploy-dev:
 	cdk deploy -c env=dev --require-approval never
