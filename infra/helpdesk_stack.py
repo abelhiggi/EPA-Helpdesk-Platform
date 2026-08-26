@@ -791,6 +791,23 @@ class HelpdeskStack(Stack):
                 ],
                 [
                     cw.GraphWidget(
+                        # A model response that couldn't be trusted at all —
+                        # unparseable or outside the taxonomy — and routed by
+                        # keyword instead. Should be near zero; a sustained
+                        # rise means the model or the prompt has drifted.
+                        title="Classification fallbacks (custom)",
+                        left=[
+                            cw.Metric(
+                                namespace=METRIC_NAMESPACE,
+                                metric_name="ClassificationFallbacks",
+                                statistic="Sum",
+                            )
+                        ],
+                        width=24,
+                    ),
+                ],
+                [
+                    cw.GraphWidget(
                         title="Queue depth and DLQ",
                         left=[
                             queue.metric_approximate_number_of_messages_visible(),

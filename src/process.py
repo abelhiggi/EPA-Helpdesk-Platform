@@ -1,17 +1,22 @@
 """Categorise a ticket with Bedrock, route it, notify the team.
 
-This is where the three custom metrics come from. They are not observability
+This is where the four custom metrics come from. They are not observability
 decoration — each one answers a question the pass criteria cannot:
 
   TicketsSubmitted (by Category)   which teams are actually carrying load
   CategorisationConfidence         whether the AI should be trusted at all
   TimeToRouteSeconds               how long a person waits before anyone sees it
+  ClassificationFallbacks          how often the model's response couldn't be
+                                    trusted at all — unparseable or outside the
+                                    taxonomy — and routing fell back to the
+                                    keyword rule instead
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import boto3
@@ -66,6 +71,21 @@ confidence is your own certainty in the category, 0.0 to 1.0.
 
 Ticket:
 {description}"""
+
+# The prompt above asks for bare JSON, but Haiku 4.5 sometimes wraps its
+# answer in a code fence anyway — defence in depth, not a substitute for
+# asking. Anchored to the whole string with DOTALL, and greedy on the
+# captured body, so this only ever strips a fence that wraps the *entire*
+# response: a stray "```" inside a value can't be mistaken for the close,
+# because greedy matching backtracks from the end of the string to find the
+# real one. `.replace("```", "")` would strip every backtick regardless of
+# position and corrupt a value that legitimately contained one.
+_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*)\s*```$", re.DOTALL)
+
+
+def _extract_json(text: str) -> str:
+    match = _FENCE_RE.match(text)
+    return match.group(1) if match else text
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -155,7 +175,18 @@ def _classify(description: str) -> tuple[str, str, float]:
     )
 
     text = result["output"]["message"]["content"][0]["text"].strip()
-    parsed = json.loads(text)
+    try:
+        parsed = json.loads(_extract_json(text))
+    except json.JSONDecodeError:
+        # Same class of problem as an out-of-taxonomy category below: a
+        # model response that cannot be trusted. temperature=0.0 makes this
+        # deterministic — retrying the identical message via SQS produces
+        # the identical unparseable response every time, so this cannot be
+        # left to raise and dead-letter; it has to degrade the same way an
+        # invalid category does, one check later in this same function.
+        warn("model response was not valid JSON, falling back")
+        emit_metric("ClassificationFallbacks", 1)
+        return _fallback(description)
 
     category = str(parsed.get("category", "")).lower()
     priority = str(parsed.get("priority", "")).lower()
@@ -165,6 +196,7 @@ def _classify(description: str) -> tuple[str, str, float]:
     # ticket to route badly. Fall back rather than write nonsense to the table.
     if category not in CATEGORIES or priority not in PRIORITIES:
         warn("model returned invalid taxonomy, falling back", returned=category)
+        emit_metric("ClassificationFallbacks", 1)
         return _fallback(description)
 
     return category, priority, max(0.0, min(1.0, confidence))
