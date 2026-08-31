@@ -19,7 +19,7 @@ checkov>=3.3.15
 # 3.3.15 loosened its own urllib3 pin to a floor (>=1.26.20), so this
 # resolves cleanly.
 #
-# asteval>=1.0.6, not >=1.0.9: checkov hard-pins asteval to an *exact*
+# asteval>=1.0.10, not >=1.0.9: checkov hard-pins asteval to an *exact*
 # version at every release checked, including latest (3.3.15: ==1.0.6). No
 # currently-supported checkov release accepts >=1.0.9. 1.0.6 clears
 # PYSEC-2026-1195 and GHSA-vp47-9734-prjw; the two remaining advisories that
@@ -27,4 +27,4 @@ checkov>=3.3.15
 # dropped — see the comment there and docs/threat-model.md's "Suppressed
 # scanner checks" section.
 urllib3>=2.7.0
-asteval>=1.0.6
+asteval>=1.0.10
