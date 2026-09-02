@@ -284,7 +284,7 @@ class HelpdeskStack(Stack):
         client = user_pool.add_client(
             "WebClient",
             generate_secret=False,
-            auth_flows=cognito.AuthFlow(user_srp=True),
+            auth_flows=cognito.AuthFlow(user_srp=True, admin_user_password=True),
             o_auth=cognito.OAuthSettings(
                 flows=cognito.OAuthFlows(authorization_code_grant=True),
                 scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
