@@ -1,4 +1,4 @@
-pytest>=9.1.1
+pytest>=9.0
 pytest-cov>=7.1.0
 boto3>=1.35
 ruff>=0.16.5
