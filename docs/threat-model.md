@@ -132,4 +132,32 @@ silently dropped.
 in the Security tab; only PR creation is suppressed.
 
 **Review trigger:** Remove this ignore, and the matching `pip-audit`
-`--ignore-vuln` flags, when checkov relaxes its asteval pin to a floor.
+`--ignore-vuln` flags, when checkov relaxes its asteval pin to a floor, or
+when checkov moves into its own isolated environment so its pins stop
+constraining our test dependencies.
+
+### Dependabot ignore: boto3 and botocore
+
+**What's suppressed:** All Dependabot updates for `boto3` and `botocore`
+(`.github/dependabot.yml`, pip block).
+
+**Why:** `checkov` 3.3.16 hard-pins `boto3` to an exact version
+(`boto3==1.35.49`), with `botocore` following that pin transitively. Any
+bump Dependabot raises for either package produces an unsatisfiable
+dependency set and fails at `pip install` with `ResolutionImpossible`, so
+the PR can never merge. `requirements-dev.txt`'s `boto3>=1.35` floor is
+deliberately set to a version checkov's own pin satisfies. Unlike the
+asteval ignore above, this is a version-bump suppression only — there is
+no advisory behind it.
+
+**Residual risk:** None specific to this suppression. boto3/botocore
+security advisories still reach this repo through the normal `pip-audit`
+step in CI; only the Dependabot PR for a routine version bump is
+suppressed, and only because it would fail to install regardless.
+
+**Detection retained:** GitHub security alerts for boto3 and botocore
+still surface in the Security tab; only PR creation is suppressed.
+
+**Review trigger:** Remove this ignore when checkov relaxes its boto3 pin
+to a floor, or when checkov moves into its own isolated environment so
+its pins stop constraining our test dependencies.
