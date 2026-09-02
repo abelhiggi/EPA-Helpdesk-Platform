@@ -75,7 +75,7 @@ const checkHealth = async function () {
     };
 
     await synthetics.executeHttpStep(
-        'GET /health',
+        'GET health',
         requestOptions,
         async (res) => {
             return new Promise((resolve, reject) => {
