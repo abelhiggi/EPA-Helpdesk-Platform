@@ -1,0 +1,30 @@
+network|Wifi keeps dropping every ten minutes in the north wing of Salford Civic Centre, whole team affected
+network|Cannot connect to the VPN from home since this morning, it just times out
+network|The printer on floor 2 shows offline on every machine even though it's switched on
+network|Shared drive is taking about 40 seconds to open any folder, was fine on Friday
+network|Desk phone has no dial tone, nobody on our row can make calls
+software|Outlook won't open, it just hangs on the loading screen and then closes
+software|Getting an error message when I try to save in Excel, says the file is locked for editing
+software|My Teams licence seems to have expired, it's asking me to sign in again and won't accept my password
+software|Mosaic crashes every time I try to attach a document to a case record
+software|Browser says my session has expired every few minutes on the finance system
+software|Nothing is working this morning, can't get into anything
+software|Everything is really slow, it's been like this since we came back from the bank holiday
+network|Been trying since 8am and it still won't let me in
+software|It says access denied but I've not changed anything
+network|Screen just froze and now it won't do anything at all
+network|Can't reach the case management system, page just spins and then times out
+software|Getting a connection error in the payments application when I try to submit
+network|Documents won't sync to SharePoint, says server not reachable
+software|Login page for the portal won't load at all
+network|Scanner won't send to email, says it can't find the server
+software|Password reset email never arrived and now I'm locked out
+network|Remote desktop keeps disconnecting me mid-call
+software|Can't open PDFs from the shared inbox, they download but won't open
+network|Video calls keep breaking up, audio drops out completely for a few seconds
+software|Two of us are seeing different figures in the same report
+software|Excel broken
+network|No internet
+software|Can't log in
+network|Printer
+software|Please help urgently, deadline today and I cannot get the report out

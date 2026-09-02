@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitHub Actions OIDC federation and CDK deploy roles. Deployed once per
+  account, outside the application stacks, because it is a prerequisite for
+  the pipeline that deploys them.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: abelhiggi
+  GitHubRepo:
+    Type: String
+    Default: EPA-Helpdesk-Platform
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Set to false if an OIDC provider for token.actions.githubusercontent.com
+      already exists in this account. Only one per account is permitted.
+
+Conditions:
+  ShouldCreateProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  # Tells IAM that tokens signed by GitHub's OIDC service are legitimate.
+  # ClientIdList restricts the token audience: a token minted for any other
+  # audience is rejected even if the signature is valid.
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # Thumbprints are no longer used for validation by IAM for this provider
+      # (AWS validates against GitHub's live JWKS), but the field is required.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  DevDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-cdk-deploy-dev
+      Description: Assumed by GitHub Actions to deploy Helpdesk-dev.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                # Audience must match what the workflow requests.
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # THE critical conditions. Without them, any repository on
+                # GitHub could assume this role. `repository` is an exact match
+                # on this repo; the StringLike block below pins the context.
+                token.actions.githubusercontent.com:repository: !Sub ${GitHubOrg}/${GitHubRepo}
+              StringLike:
+                # IAM requires a condition on `sub` or `job_workflow_ref` and
+                # rejects the trust policy otherwise, so `repository` alone is
+                # not permitted however precise it looks.
+                #
+                # This repository has "include actor and repository IDs in the
+                # OIDC subject" enabled, so `sub` arrives as
+                #   repo:owner@<actorId>/repo@<repoId>:environment:<name>
+                # The wildcards absorb those opaque IDs. Scoping is not weakened
+                # by them: the StringEquals condition on `repository` above
+                # pins the exact repository, and this pins the context.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:ref:refs/heads/main
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:environment:dev
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:environment:production
+      Policies:
+        - PolicyName: assume-cdk-bootstrap-roles
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The role holds almost no permissions of its own. CDK bootstrap
+              # already created four scoped roles in this account; this role's
+              # only job is to assume them. That means the pipeline identity
+              # cannot do anything CDK itself cannot do.
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-deploy-role-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-image-publishing-role-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-lookup-role-${AWS::AccountId}-${AWS::Region}
+        - PolicyName: post-deploy-tasks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # publish-frontend.sh and smoke-test.sh need these directly.
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/Helpdesk-dev/*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::helpdesk-dev-*
+                  - !Sub arn:aws:s3:::helpdesk-dev-*/*
+              - Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
+
+  ProdDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-cdk-deploy-prod
+      Description: Assumed by GitHub Actions to deploy Helpdesk-prod.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # See the dev role above for why this conditions on
+                # `repository` and `ref` rather than `sub`.
+                token.actions.githubusercontent.com:repository: !Sub ${GitHubOrg}/${GitHubRepo}
+              StringLike:
+                # IAM requires a condition on `sub` or `job_workflow_ref` and
+                # rejects the trust policy otherwise, so `repository` alone is
+                # not permitted however precise it looks.
+                #
+                # This repository has "include actor and repository IDs in the
+                # OIDC subject" enabled, so `sub` arrives as
+                #   repo:owner@<actorId>/repo@<repoId>:environment:<name>
+                # The wildcards absorb those opaque IDs. Scoping is not weakened
+                # by them: the StringEquals condition on `repository` above
+                # pins the exact repository, and this pins the context.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:ref:refs/heads/main
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:environment:dev
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:environment:production
+      Policies:
+        - PolicyName: assume-cdk-bootstrap-roles
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-deploy-role-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-image-publishing-role-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-lookup-role-${AWS::AccountId}-${AWS::Region}
+        - PolicyName: post-deploy-tasks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/Helpdesk-prod/*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::helpdesk-prod-*
+                  - !Sub arn:aws:s3:::helpdesk-prod-*/*
+              - Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
+
+Outputs:
+  DevDeployRoleArn:
+    Description: Set as the DEV_DEPLOY_ROLE_ARN repository secret.
+    Value: !GetAtt DevDeployRole.Arn
+  ProdDeployRoleArn:
+    Description: Set as the PROD_DEPLOY_ROLE_ARN repository secret.
+    Value: !GetAtt ProdDeployRole.Arn
