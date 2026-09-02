@@ -1,7 +1,7 @@
-pytest>=8.0
-pytest-cov>=5.0
+pytest>=9.1.1
+pytest-cov>=7.1.0
 boto3>=1.35
-ruff>=0.7
+ruff>=0.16.5
 # >=3.3.15, not just >=3.2: this is the release that loosened checkov's own
 # urllib3 pin to a floor instead of an exact version (see below). Without
 # this explicit floor, pip's resolver is free to satisfy the asteval/urllib3
@@ -9,7 +9,7 @@ ruff>=0.7
 # technically valid, but ~340 releases of rule coverage and bugfixes worse,
 # for the same or a worse security outcome. Confirmed by reproducing that
 # backtrack locally before adding this line.
-checkov>=3.3.15
+checkov>=3.3.16
 
 # Transitive pins raised to clear known advisories in checkov's dependency
 # tree. Dev-tooling only — the Lambda functions ship no bundled dependencies,
