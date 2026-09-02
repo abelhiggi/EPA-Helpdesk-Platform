@@ -20,11 +20,12 @@ checkov>=3.3.15
 # resolves cleanly.
 #
 # asteval>=1.0.6, not >=1.0.9: checkov hard-pins asteval to an *exact*
-# version at every release checked, including latest (3.3.15: ==1.0.6). No
+# version at every release checked, including latest (3.3.16: ==1.0.6). No
 # currently-supported checkov release accepts >=1.0.9. 1.0.6 clears
-# PYSEC-2026-1195 and GHSA-vp47-9734-prjw; the two remaining advisories that
-# need 1.0.9 are ignored explicitly in ci.yml's pip-audit step, not silently
-# dropped — see the comment there and docs/threat-model.md's "Suppressed
-# scanner checks" section.
+# PYSEC-2026-1195 and GHSA-vp47-9734-prjw; the one remaining advisory that
+# needs 1.0.9 (GHSA-9w56-46f6-3qhx / CVE-2026-55244, same vulnerability
+# under two IDs) is ignored explicitly in ci.yml's pip-audit step, not
+# silently dropped — see the comment there and docs/threat-model.md's
+# "Suppressed scanner checks" section.
 urllib3>=2.7.0
 asteval>=1.0.6
