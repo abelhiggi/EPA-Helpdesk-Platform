@@ -9,6 +9,13 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      # checkov hard-pins asteval==1.0.6 (still true at 3.3.16), so any bump
+      # Dependabot raises here is unsatisfiable. The one advisory needing
+      # 1.0.9 (GHSA-9w56-46f6-3qhx / CVE-2026-55244) is dev-tooling only and
+      # suppressed explicitly in ci.yml's pip-audit step — see
+      # docs/threat-model.md.
+      - dependency-name: "asteval"
     groups:
       cdk:
         patterns: ["aws-cdk-lib", "constructs"]

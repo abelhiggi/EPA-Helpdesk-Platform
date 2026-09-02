@@ -108,3 +108,28 @@ auto-generate their names: an auto-generated name only exists as a `Ref` to
 the log group resource, and putting that `Ref` in the key's policy while the
 log group also references the key for encryption is a literal CloudFormation
 dependency cycle.
+
+### Dependabot ignore: asteval
+
+**What's suppressed:** All Dependabot updates for `asteval`
+(`.github/dependabot.yml`, pip block).
+
+**Why:** `checkov` hard-pins `asteval` to an exact version at every
+release checked, including latest (3.3.16: `asteval==1.0.6`). Any bump
+Dependabot raises produces an unsatisfiable dependency set and fails at
+install, so the PR can never merge. Verified against PyPI metadata, not
+just checkov's changelog.
+
+**Residual risk:** GHSA-9w56-46f6-3qhx / CVE-2026-55244 (one
+vulnerability, two IDs), fixed upstream at asteval 1.0.9. Accepted:
+asteval reaches this repo only as a transitive dependency of checkov, a
+dev-time and CI-time tool. The Lambda functions bundle no third-party
+packages, so no deployed code path reaches it. The same IDs are
+suppressed explicitly in `ci.yml`'s `pip-audit` step rather than
+silently dropped.
+
+**Detection retained:** GitHub security alerts for asteval still surface
+in the Security tab; only PR creation is suppressed.
+
+**Review trigger:** Remove this ignore, and the matching `pip-audit`
+`--ignore-vuln` flags, when checkov relaxes its asteval pin to a floor.
