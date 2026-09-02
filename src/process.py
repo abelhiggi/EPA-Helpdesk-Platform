@@ -71,9 +71,9 @@ confidence is your own certainty in the category, 0.0 to 1.0.
 
 Examples:
 "VPN times out from home" -> {{"category": "network", "priority": "high", "confidence": 0.95}}
-"Excel says the file is locked" -> {{"category": "software", "priority": "medium", "confidence": 0.9}}
-"Nothing is working this morning" -> {{"category": "software", "priority": "high", "confidence": 0.7}}
-"Everything is slow for the whole team" -> {{"category": "network", "priority": "high", "confidence": 0.7}}
+"Excel file is locked" -> {{"category": "software", "priority": "medium", "confidence": 0.9}}
+"Nothing works this morning" -> {{"category": "software", "priority": "high", "confidence": 0.7}}
+"Everything slow for whole team" -> {{"category": "network", "priority": "high", "confidence": 0.7}}
 
 Ticket:
 {description}"""
