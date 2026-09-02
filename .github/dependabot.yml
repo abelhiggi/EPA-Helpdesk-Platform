@@ -18,7 +18,7 @@ updates:
       # one advisory needing 1.0.9 (GHSA-9w56-46f6-3qhx / CVE-2026-55244),
       # dev-tooling only and suppressed explicitly in ci.yml's pip-audit
       # step; boto3/botocore have no associated advisory — this is a
-      # version-bump suppression only. See docs/threat-model.md.
+      # version-bump suppression only. See docs/threat-model.md
       - dependency-name: "asteval"
       - dependency-name: "boto3"
       - dependency-name: "botocore"
