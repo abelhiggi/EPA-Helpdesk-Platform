@@ -10,12 +10,18 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     ignore:
-      # checkov hard-pins asteval==1.0.6 (still true at 3.3.16), so any bump
-      # Dependabot raises here is unsatisfiable. The one advisory needing
-      # 1.0.9 (GHSA-9w56-46f6-3qhx / CVE-2026-55244) is dev-tooling only and
-      # suppressed explicitly in ci.yml's pip-audit step — see
-      # docs/threat-model.md.
+      # checkov 3.3.16 hard-pins asteval==1.0.6 and boto3==1.35.49 exactly
+      # (botocore follows boto3's pin transitively), so any bump Dependabot
+      # raises for these is unsatisfiable and fails at `pip install` with
+      # ResolutionImpossible. requirements-dev.txt's floors are deliberately
+      # set to versions checkov's own pins satisfy. asteval's pin also has
+      # one advisory needing 1.0.9 (GHSA-9w56-46f6-3qhx / CVE-2026-55244),
+      # dev-tooling only and suppressed explicitly in ci.yml's pip-audit
+      # step; boto3/botocore have no associated advisory — this is a
+      # version-bump suppression only. See docs/threat-model.md.
       - dependency-name: "asteval"
+      - dependency-name: "boto3"
+      - dependency-name: "botocore"
     groups:
       cdk:
         patterns: ["aws-cdk-lib", "constructs"]
