@@ -772,8 +772,15 @@ class HelpdeskStack(Stack):
                             cw.Metric(
                                 namespace=METRIC_NAMESPACE,
                                 metric_name="CategorisationConfidence",
+                                dimensions_map={
+                                    "Service": "helpdesk",
+                                    "Environment": env_name,
+                                    "Category": c,
+                                },
                                 statistic="Average",
+                                label=c,
                             )
+                            for c in ("network", "software")
                         ],
                         width=8,
                     ),
@@ -783,8 +790,15 @@ class HelpdeskStack(Stack):
                             cw.Metric(
                                 namespace=METRIC_NAMESPACE,
                                 metric_name="TimeToRouteSeconds",
+                                dimensions_map={
+                                    "Service": "helpdesk",
+                                    "Environment": env_name,
+                                    "Category": c,
+                                },
                                 statistic="p90",
+                                label=c,
                             )
+                            for c in ("network", "software")
                         ],
                         width=8,
                     ),
@@ -800,6 +814,10 @@ class HelpdeskStack(Stack):
                             cw.Metric(
                                 namespace=METRIC_NAMESPACE,
                                 metric_name="ClassificationFallbacks",
+                                dimensions_map={
+                                    "Service": "helpdesk",
+                                    "Environment": env_name,
+                                },
                                 statistic="Sum",
                             )
                         ],
