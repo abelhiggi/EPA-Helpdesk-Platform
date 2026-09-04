@@ -65,7 +65,7 @@ summarised here so it's readable without opening a scanner config.
 | CKV_AWS_18 | S3 access logging, on the site bucket and the canary artifacts bucket | Would need a second bucket purely to receive logs nobody has a use case for yet. CloudTrail data events are the right control if that need ever appears |
 | CKV_AWS_115 | Lambda reserved concurrency, on Ingest and Process (fixed properly on Redrive — see below) | Fixed on Redrive, where it's a correctness bound against racing DLQ redrives. On Ingest (the customer-facing submission path) and Process, it would just be an arbitrary throughput ceiling with real 429-throttling risk under real load, not a correctness requirement |
 | CKV_AWS_174 | A minimum TLS version on the CloudFront viewer certificate | This distribution has no custom domain, so it uses the default `*.cloudfront.net` certificate — AWS does not allow a minimum protocol version to be set on that certificate at all. Only configurable with a custom domain and ACM certificate, which is a real architecture addition, not a config change |
-| CKV_AWS_68 | A WAF WebACL on the CloudFront distribution | Two write-capable routes exist behind it, `POST /tickets` and `GET /health`, both already bounded by the 25 req/s stage throttle, with Cognito required on every route except the deliberately-open health check. A WAF is real ongoing cost for a threat this architecture doesn't have an unmitigated case of |
+| CKV_AWS_68 | A WAF WebACL on the CloudFront distribution | One write-capable route exists behind it, `POST /tickets`; `GET /health` is the only unauthenticated one. Both are already bounded by the 25 req/s stage throttle, with Cognito required on every route except the deliberately-open health check. A WAF is real ongoing cost for a threat this architecture doesn't have an unmitigated case of |
 | CKV_AWS_86 | CloudFront access logging | Same reasoning as CKV_AWS_18: a logging destination bucket with no current use case for its contents |
 
 ### pip-audit (dependency vulnerabilities)
@@ -88,8 +88,8 @@ transitive dependencies of checkov:
 
 | Finding | Package | Why it's ignored |
 |---|---|---|
-| GHSA-9w56-46f6-3qhx / CVE-2026-55244 (one vulnerability, two IDs) | asteval 1.0.6 | Fixed at 1.0.9, but checkov hard-pins asteval to an *exact* version at every release, including latest (3.3.15: `==1.0.6`). `requirements-dev.txt` raises the floor to 1.0.6 — everything checkov itself has adopted — pending checkov relaxing its own pin upstream. Dev-tooling only; see above |
-| PYSEC-2026-1325 (aka CVE-2024-23342, GHSA-wj6h-64fc-37mp — the Minerva timing attack) | ecdsa 0.19.2 | A direct dependency of checkov 3.3.15, pulled in when raising the checkov floor to resolve the asteval/urllib3 pins above. Not pending anything: the ecdsa project has stated side-channel attacks are out of scope and there is no planned fix, so this is accepted permanently, not a version to wait for. Dev-tooling only; see above |
+| GHSA-9w56-46f6-3qhx / CVE-2026-55244 (one vulnerability, two IDs) | asteval 1.0.6 | Fixed at 1.0.9, but checkov hard-pins asteval to an *exact* version at every release, including latest (3.3.16: `==1.0.6`). `requirements-dev.txt` raises the floor to 1.0.6 — everything checkov itself has adopted — pending checkov relaxing its own pin upstream. Dev-tooling only; see above |
+| PYSEC-2026-1325 (aka CVE-2024-23342, GHSA-wj6h-64fc-37mp — the Minerva timing attack) | ecdsa 0.19.2 | A direct dependency of checkov 3.3.16, pulled in when raising the checkov floor to resolve the asteval/urllib3 pins above. Not pending anything: the ecdsa project has stated side-channel attacks are out of scope and there is no planned fix, so this is accepted permanently, not a version to wait for. Dev-tooling only; see above |
 
 **Fixed, not suppressed, in the same pass:** API Gateway access logging
 (CKV_AWS_76 — a dedicated, KMS-encrypted log group with a structured JSON

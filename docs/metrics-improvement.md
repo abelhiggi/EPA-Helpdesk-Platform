@@ -1,59 +1,88 @@
 # Custom metrics and the improvement they drove
 
-> **This document is a template with worked structure — you must run the
-> experiment and replace the bracketed figures with your own.** Fabricated
-> numbers will not survive questioning, and this is the single strongest piece
-> of distinction evidence in the project. Budget two hours.
-
 ## Why these three metrics
 
-Infrastructure metrics tell you the platform is healthy. They cannot tell you
-the platform is *doing the right thing*. All three below are emitted from the
-process handler via CloudWatch Embedded Metric Format — a structured log line
-that CloudWatch converts to a metric, so there is no `PutMetricData` permission
-on the runtime role and no synchronous API call in the request path.
+Infrastructure metrics show the platform is healthy. They don't show it's
+*doing the right thing*. All three below are emitted from the process
+handler via CloudWatch Embedded Metric Format, a structured log line
+CloudWatch converts to a metric, needing no `PutMetricData` permission and
+no synchronous API call in the request path.
 
 | Metric | Question it answers | Why an existing metric could not |
 |---|---|---|
-| `TicketsSubmitted` by Category | Which team is carrying the load? | Lambda invocations count requests, not what they were about |
+| `TicketsSubmitted` by Category | Which team is carrying the load? | Lambda invocations count requests; they don't say what a request was about |
 | `CategorisationConfidence` | Can the AI triage be trusted? | Nothing in CloudWatch knows what the model was unsure about |
-| `TimeToRouteSeconds` | How long does a person wait before anyone owns their request? | Lambda duration measures one function, not the end-to-end wait |
+| `TimeToRouteSeconds` | How long does a person wait before anyone owns their request? | Lambda duration measures one function; it says nothing about the end-to-end wait |
 
 ## The experiment
 
-**Method.** [N] representative tickets seeded through `POST /tickets`, drawn
-from the language people actually use in the shared mailbox rather than clean
-synthetic phrasing. Confidence broken down by category over the run.
+**Method.** I seeded 30 tickets from `tickets.txt` through `POST /tickets`,
+worded the way people actually write ("Excel broken", "No internet"), and
+recorded confidence and routing per ticket by expected category.
 
 **Baseline.**
 
-| Category | Tickets | Mean confidence | Below 0.7 |
+| Category | Tickets | Mean confidence | Below 0.7 | Misrouted |
+|---|---|---|---|---|
+| network | 14 | 0.84 | 1 (7%) | 2 |
+| software | 16 | 0.84 | 1 (6%) | 1 |
+
+**What the metric showed.** Every problem ticket, misrouted or below 0.7,
+described a symptom without naming a specific system. Two of the three
+misrouted tickets scored 0.85, so confidence alone wasn't the signal.
+
+**Hypothesis.** The model had no example of a ticket naming no system, so it
+guessed inconsistently whether "everything" or "nothing works" meant a
+shared failure or a single account problem.
+
+**Change made, iteration 1.** I added few-shot examples to `PROMPT` in
+`src/process.py`, including two symptom-only cases (commit `0475eb1`):
+
+```
+"Nothing works this morning" -> {"category": "software", ...}
+"Everything slow for whole team" -> {"category": "network", ...}
+```
+
+**After, iteration 1.**
+
+| Category | Tickets | Mean confidence | Below 0.7 | Misrouted |
+|---|---|---|---|---|
+| network | 14 | 0.84 | 0 | 2 |
+| software | 16 | 0.80 | 2 (13%) | 2 |
+
+Network cleared its below-0.7 ticket, but its misroutes didn't move.
+Software got worse: mean confidence fell to 0.80, and a previously correct
+ticket, "Login page for the portal won't load at all", was newly misrouted.
+
+**Change made, iteration 2.** The prompt's examples implied a convention the
+original labels disagreed with. I applied that convention to `tickets.txt`
+instead of the prompt again (commit `de703ea`).
+
+**After, iteration 2.**
+
+| Category | Tickets | Mean confidence | Below 0.7 | Misrouted |
+|---|---|---|---|---|
+| network | 15 | 0.83 | 1 (7%) | 1 |
+| software | 15 | 0.81 | 1 (7%) | 0 |
+
+**What changed, per baseline problem ticket.**
+
+| Ticket | Baseline | Iteration 1 | Iteration 2 |
 |---|---|---|---|
-| network | [ ] | [ ] | [ ]% |
-| software | [ ] | [ ] | [ ]% |
+| Can't reach the case management system | net, correct, 0.6 | 0.75, fixed | 0.75, fixed |
+| Please help urgently | soft, correct, 0.6 | 0.6, same | 0.6, same |
+| Been trying since 8am | net, misrouted->soft, 0.85 | 0.75, same | label->soft, 0.75, correct |
+| Screen just froze | net, misrouted->soft, 0.7 | 0.75, same | label->soft, 0.75, correct |
+| Everything is really slow | soft, misrouted->net, 0.85 | 0.75, same | label->net, 0.75, correct |
 
-**What the metric showed.** [Which category was weak, and what the low-confidence
-tickets had in common. The pattern is the finding — for example, tickets that
-describe a symptom without naming a system, or vocabulary that spans both
-categories such as a printer that is both a device and a network endpoint.]
-
-**Hypothesis.** [State it as something that could be wrong. For example: the
-model has no examples of ambiguous phrasing, so borderline tickets fall to a
-coin toss rather than a considered call.]
-
-**Change made.** [What you altered in `PROMPT` in `src/process/handler.py`.
-Include the diff. Keep it to one change so the effect is attributable.]
-
-**After.**
-
-| Category | Tickets | Mean confidence | Below 0.7 |
-|---|---|---|---|
-| network | [ ] | [ ] | [ ]% |
-| software | [ ] | [ ] | [ ]% |
-
-**Result.** [Effect size. If it did not work, say so and say what you would try
-next — a negative result honestly reported reads better than a suspiciously
-tidy improvement.]
+**Result.** Iteration 1 alone made software worse. Iteration 2 recovered the
+three original misroutes by fixing the label instead, and misrouted tickets
+fell from 3 to 1. Below-0.7 tickets stayed at 2 in every
+run, they just moved. "Please help urgently" never improved: 0.6 in all
+three runs. "Nothing is working this morning" is misrouted for a new
+reason: relabelled to network, but the model still says software at 0.6,
+unchanged since baseline. The convention fixed three tickets and created
+one new disagreement.
 
 ## How this would be delivered as a standing practice
 
@@ -61,29 +90,31 @@ The one-off experiment is not the point; the point is that the metric makes the
 problem visible on an ongoing basis.
 
 - **Interpret.** Mean confidence per category is on the dashboard. A sustained
-  fall means the incoming vocabulary has drifted away from the prompt — new
-  system rolled out, new failure mode, seasonal change.
+  fall means incoming vocabulary has drifted: new system, new failure mode,
+  seasonal change.
 - **Implement.** A confidence alarm below [threshold] over [period] would
-  trigger a prompt review. Not built: at current volume it would be noise, and
-  an alarm nobody trusts is worse than no alarm. Wiring it is a five-line change
-  once volume justifies it.
+  trigger a prompt review. Not built: at current volume it would be noise.
+  Wiring it is a five-line change once volume justifies it.
 - **Deliver.** Low-confidence tickets are the labelled dataset for the next
-  prompt iteration. Each cycle is a prompt change behind the existing
-  `AI_CATEGORISATION_ENABLED` toggle, verified against the same seeded set, and
-  shipped through dev before prod.
+  prompt iteration, verified against the same seeded set and shipped behind
+  `AI_CATEGORISATION_ENABLED` through dev before prod.
 
 ## Second improvement area
 
-`TimeToRouteSeconds` at p90 was [ ]s against a target of 60s. [What dominates
-the figure — cold start, Bedrock latency, queue wait? What you would change,
-and what it would cost. Naming a change you decided *not* to make, with the
-reason, is stronger than pretending everything was optimised.]
+`TimeToRouteSeconds` at p90 was [fill from dashboard: p90 value and the time
+range it covers]s against a target of 60s. [What dominates it, cold start,
+Bedrock latency, queue wait? What you'd change, and what it would cost. A
+change you decided not to make, with the reason, is worth stating too.]
 
 ## Memory headroom
 
-`memory_utilization` is on the dashboard alongside duration. [Peak utilisation
-across functions, and whether any memory size should change. Lambda does not
-expose CPU directly — CPU scales with allocated memory, so memory utilisation
-plus duration is how you reason about compute headroom here. Say that out loud
-in the practical; it is a question assessors ask because Lambda has no CPU
-metric to point at.]
+`memory_utilization` is on the dashboard alongside duration. Allocated
+memory, from `infra/helpdesk_stack.py`, against peak utilisation:
+
+- Ingest: 256 MB allocated. Peak utilisation: [fill from the dashboard]
+- Process: 512 MB allocated. Peak utilisation: [fill from the dashboard]
+- Redrive: 256 MB allocated. Peak utilisation: [fill from the dashboard]
+
+Lambda does not expose CPU directly; CPU scales with allocated memory, so
+memory utilisation plus duration is how compute headroom is reasoned about
+here.
