@@ -86,7 +86,6 @@ scripts/                  publish frontend, smoke test
 tests/                    handler tests and CDK template assertions
 docs/                     architecture, deploying, runbook, threat model,
                           user needs, troubleshooting, metrics improvement
-epa/                      apprenticeship assessment artefacts
 ```
 
 ## Docs
