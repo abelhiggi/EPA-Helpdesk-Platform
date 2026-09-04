@@ -22,14 +22,22 @@ and service-quota boundary that stack-level name separation cannot give you,
 because it is enforced by AWS itself rather than by naming discipline. That
 is the pattern to move to outside this sandbox; see `docs/runbook.md`.
 
-```
-Officer ─▶ CloudFront/S3 ─▶ Cognito ─▶ API Gateway ─▶ ingest ─▶ DynamoDB
-                                                          │
-                                                        SQS ─▶ process ─▶ Bedrock
-                                                          │            ─▶ SES
-                                                          │            ─▶ metrics
-                                                         DLQ ─▶ redrive ─┘
-```
+## Architecture
+
+High-level view:
+
+![High-level architecture](docs/High-level-EPA-diagram.png)
+
+<details>
+<summary>Full detail (every resource, all data flows)</summary>
+
+![Detailed AWS architecture](docs/AWS-HELPDESK-EPA-DIAGRAM.png)
+
+</details>
+
+Officer → CloudFront/S3 → Cognito → API Gateway → ingest → DynamoDB → SQS →
+process → Bedrock / SES / metrics, with a DLQ and automated redrive on
+repeated failure.
 
 Full diagram and design rationale: [`docs/architecture.md`](docs/architecture.md)
 
@@ -38,21 +46,62 @@ Full diagram and design rationale: [`docs/architecture.md`](docs/architecture.md
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-make all          # lint, 56 tests, synth both environments — all offline
+make all          # lint, 71 tests, synth both environments — all offline
 ```
 
 Deploy: `make deploy-dev`, then `make deploy-prod`. First-time account setup is
 in [`docs/runbook.md`](docs/runbook.md).
 
+## Shipping a change: VS Code → dev → prod
+
+There is no `dev` or `prod` git branch. One trunk (`main`), two deploy
+*environments*, both driven from the same push — the pipeline, not the
+branch name, decides where code lands.
+
+1. Edit in VS Code. Run `make all` locally before pushing — it's the same
+   lint, test and synth CI runs, entirely offline.
+2. Commit, push a branch, open a PR against `main`.
+3. `.github/workflows/ci.yml` runs on the PR:
+   - **`verify`** — `ruff check .` and `ruff format --check .`, `make test`
+     (pytest with an 80% coverage gate), `cdk synth` for both dev and prod,
+     `checkov` against the synthesised CloudFormation, and `pip-audit`
+     against dependencies.
+   - **`codeql`** — static analysis, runs in parallel with `verify`.
+   - Both are required status checks (set in GitHub Settings → Branches;
+     there's no branch-protection-as-code file) — the PR can't merge until
+     they're green.
+4. Merge to `main` triggers `.github/workflows/deploy.yml`.
+5. **`dev` job** runs first, no approval needed: assumes `DEV_DEPLOY_ROLE_ARN`
+   over OIDC, runs `make deploy-dev`, publishes the frontend
+   (`scripts/publish-frontend.sh Helpdesk-dev`), then smoke-tests it
+   (`scripts/smoke-test.sh Helpdesk-dev`).
+6. **`prod` job** runs only if `dev` succeeds, and only after a human
+   approves it in GitHub's `production` environment (the required-reviewer
+   gate configured per `docs/runbook.md`). It then assumes
+   `PROD_DEPLOY_ROLE_ARN` over OIDC, runs `make deploy-prod`, publishes the
+   frontend, and smoke-tests it. If the smoke test fails, the job checks out
+   the previous commit and redeploys automatically — rollback is a
+   redeploy, not a separate release-manifest process.
+
+No static AWS credentials exist anywhere in this pipeline — both jobs assume
+a role over OIDC, and the two roles are scoped so a dev deploy credential
+cannot touch prod resources.
+
+Two more things ride the same pipeline: `deploy.yml` also runs on a weekly
+schedule (Mondays 03:00) so both environments redeploy — and pick up patched
+dependencies — even with no code change; and Dependabot PRs go through the
+identical `verify`/`codeql` gate, then auto-merge via the `auto-merge` job
+inside `ci.yml` (not a separate workflow) once both pass.
+
 ## Where the evidence lives
 
 | Criterion | Evidence |
 |---|---|
-| Code quality | `src/`, `infra/`, 56 tests at 98% coverage, `docs/troubleshooting.md` |
+| Code quality | `src/`, `infra/`, 71 tests at 98% coverage, `docs/troubleshooting.md` |
 | **Should-have user needs** | `docs/user-needs.md` — S1–S4 all delivered; `GET /tickets/{id}`, priority, dashboard, WCAG AA |
 | CI-CD pipeline | `.github/workflows/ci.yml`, `deploy.yml` |
 | **Fully automated patching** | `.github/dependabot.yml` + auto-merge job + weekly scheduled deploy |
-| **Custom metrics** | `docs/metrics-improvement.md` — three business metrics and the change they drove |
+| **Custom metrics** | `docs/metrics-improvement.md` — business metrics and the change they drove |
 | Data persistence | DynamoDB with one GSI; `docs/architecture.md` for why not RDS |
 | **Additional automation** | `src/redrive.py` — removed ~15 min of manual DLQ triage per incident |
 | Data security | `docs/threat-model.md` — STRIDE, and the encryption-at-rest decision |
@@ -70,8 +119,11 @@ long-lived branch.
 state; there is no bespoke release-manifest machinery, because a rollback path
 you never exercise is not a rollback path.
 
-**Every alarm has an action.** All five route to SNS, and the DLQ alarm also
-triggers the redrive function.
+**Seven alarms, every one has an action.** Six route to the main alarm SNS
+topic (canary availability, DLQ depth, process errors, ingest errors, API
+server errors, `/health` errors); the DLQ depth condition also fires a
+separate `DlqRemediationAlarm`, whose action is the `redrive` Lambda via its
+own SNS topic — so a stuck DLQ triggers automated recovery, not just a page.
 
 **One KMS key, not three.** Reasoning in `docs/threat-model.md`.
 
@@ -96,13 +148,3 @@ All three functions share `src/` as a single asset, so `common.py` is importable
 without being copied or layered. The cost is a few unused KB per bundle and a
 change to one handler versioning all three — worth it to remove a build step
 that could be forgotten.
-
-## Before submission
-
-- [ ] Run the metrics experiment and fill in `docs/metrics-improvement.md`
-- [ ] Record at least one real incident in `docs/troubleshooting.md`
-- [ ] Confirm the CDK-vs-CloudFormation change with BCS in writing (the signed-off
-      mapping says CDK TypeScript; this is CDK Python — same tool, single
-      toolchain, one test harness)
-- [ ] Verify a Dependabot PR has auto-merged and reached prod; screenshot the chain
-- [ ] Run axe DevTools over the UI and keep the report
