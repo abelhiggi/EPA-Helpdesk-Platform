@@ -92,28 +92,49 @@ problem visible on an ongoing basis.
 - **Interpret.** Mean confidence per category is on the dashboard. A sustained
   fall means incoming vocabulary has drifted: new system, new failure mode,
   seasonal change.
-- **Implement.** A confidence alarm below [threshold] over [period] would
-  trigger a prompt review. Not built: at current volume it would be noise.
-  Wiring it is a five-line change once volume justifies it.
+- **Implement.** A confidence alarm on average `CategorisationConfidence`
+  below 0.7 over a 1-hour period, missing data treated as not breaching so
+  an hour with no tickets doesn't fire. The mean sits at 0.83–0.84 and only
+  around 7% of tickets fall below 0.7, so an hourly average under 0.7 means
+  most of that hour's tickets were uncertain, which points to drift rather
+  than a couple of noisy ones. Not built: at current volume it would be
+  noise. Wiring it is a five-line change once volume justifies it.
 - **Deliver.** Low-confidence tickets are the labelled dataset for the next
   prompt iteration, verified against the same seeded set and shipped behind
   `AI_CATEGORISATION_ENABLED` through dev before prod.
 
 ## Second improvement area
 
-`TimeToRouteSeconds` at p90 was [fill from dashboard: p90 value and the time
-range it covers]s against a target of 60s. [What dominates it, cold start,
-Bedrock latency, queue wait? What you'd change, and what it would cost. A
-change you decided not to make, with the reason, is worth stating too.]
+`TimeToRouteSeconds` at p90 was 1.7s over the Helpdesk-dev experiment window
+(2–4 Sep 2026), against a target of 60s.
+
+The process function itself accounts for about 0.9s of that (913ms peak
+5-minute average duration), almost all of it the Bedrock Converse call. The
+remaining 0.8s is SQS delivery and event-source polling, plus an occasional
+cold start.
+
+If this were close to the 60s target I'd add provisioned concurrency on
+process to remove cold starts. I haven't: the wait is roughly 35 times under
+target, and provisioned concurrency is a fixed monthly cost against a
+problem the metric shows doesn't exist. A larger SQS batch size is the other
+change I haven't made, for the same reason from the other direction: it
+would cut per-invocation overhead but blur per-ticket time-to-route, since
+one invocation's duration would then cover several tickets instead of one.
 
 ## Memory headroom
 
 `memory_utilization` is on the dashboard alongside duration. Allocated
 memory, from `infra/helpdesk_stack.py`, against peak utilisation:
 
-- Ingest: 256 MB allocated. Peak utilisation: [fill from the dashboard]
-- Process: 512 MB allocated. Peak utilisation: [fill from the dashboard]
-- Redrive: 256 MB allocated. Peak utilisation: [fill from the dashboard]
+- Ingest: 256 MB allocated. Peak utilisation: 41% (~105 MB)
+- Process: 512 MB allocated. Peak utilisation: 21% (~107 MB)
+- Redrive: 256 MB allocated. Not on the dashboard; invoked only when the DLQ
+  alarm fires.
+
+Ingest and process land on almost the same figure, about 105 MB, because
+they share one Lambda asset. Process's larger allocation is there for CPU
+and network bandwidth during the Bedrock call. It isn't extra memory
+headroom, so I'm not changing either allocation.
 
 Lambda does not expose CPU directly; CPU scales with allocated memory, so
 memory utilisation plus duration is how compute headroom is reasoned about
